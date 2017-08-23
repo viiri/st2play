@@ -85,7 +85,7 @@ typedef struct st2_sample_s {
 	uint8_t *data; // !!!
 } st2_sample_t;
 
-typedef struct st2_tracker_s {
+typedef struct st2_context_s {
 	uint16_t sample_rate;
 	uint16_t pattern_current;
 	uint8_t change_pattern;
