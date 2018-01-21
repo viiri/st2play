@@ -62,7 +62,6 @@ static int sdl_init(st2_context_t *ctx)
 
 int main(int argc, char *argv[])
 {
-	int i;
 	st2_context_t *context;
 
 	if (argc < 2)
