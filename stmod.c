@@ -73,14 +73,16 @@ int main(int argc, char *argv[])
 	st2_init_tables();
 	context = st2_tracker_init();
 
-	stm_load(context, argv[1]);
+	if(stm_load(context, argv[1]))
+	    return -1;
+
 	st2_tracker_start(context, SAMPLING_FREQ);
 	st2_set_position(context, 0);
 
 	if(sdl_init(context) < 0)
 	{
 		fprintf(stderr, "%s: can't initialize sound\n", argv[0]);
-		exit(1);
+		return 1;
 	}
 
 	SDL_PauseAudio(0);

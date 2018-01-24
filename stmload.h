@@ -23,8 +23,7 @@ typedef struct stm_header_s {
 	uint8_t song_name[20];	/* ASCIIZ song name */
 	uint8_t tracker_name[9];	/* '!Scream!\x1a' */
 	uint8_t type;		/* 1=song, 2=module */
-	uint8_t version_major;	/* Major version number */
-	uint8_t version_minor;	/* Minor version number */
+	uint16_t version;	/* Version number */
 	uint8_t tempo;		/* Playback tempo */
 	uint8_t patterns;		/* Number of patterns */
 	uint8_t gvol;		/* Global volume */

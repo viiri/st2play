@@ -18,8 +18,8 @@
 
 #include <stdio.h>
 #include <stdint.h>
-#include <string.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "st2play.h"
 #include "stmload.h"
@@ -54,32 +54,57 @@ int stm_load(st2_context_t *ctx, const char *filename)
 	FILE *fp;
 	stm_header_t stm;
 
-	int i;
+	uint8_t code;
+	int i, j, result = -1;
 
-	printf("Loading song\n");
 	if((fp = fopen(filename, "rb")) == NULL)
 	{
 		printf("LOAD ERROR!\n");
-		return -1;
+		goto cleanup;
 	}
 
 	fread(&stm.song_name, 1, 20, fp);
 	fread(&stm.tracker_name, 1, 9, fp);
-	stm.type = fgetc(fp);
-	stm.version_major = fgetc(fp);
-	stm.version_minor = fgetc(fp);
 
-	if(stm.version_major != 2 && stm.version_minor < 21)
-		return -1;
+	stm.type = fgetc(fp);
+	if(stm.type != 1 && stm.type != 2)
+	{
+		printf("Unknown song type!\n");
+		goto cleanup;
+	}
+
+	stm.version = 100 * fgetc(fp) + fgetc(fp);
+	if(stm.version > 221)
+	{
+		printf("Unknown version!\n");
+		goto cleanup;
+	}
+
+	if(stm.version != 200 && stm.version != 210 && stm.version != 220 && stm.version != 221)
+	{
+		printf("TODO: File version (%i) prior to 2.\n", stm.version);
+		goto cleanup;
+	}
 
 	stm.tempo = fgetc(fp);
+	if(stm.version < 221)
+		stm.tempo = (stm.tempo / 10 << 4) + stm.tempo % 10;
 	ctx->tempo = stm.tempo;
+
 	stm.patterns = fgetc(fp);
+
+	// TODO: song_init
+	ctx->order_list_ptr = (uint8_t *)(malloc(128));
+	ctx->pattern_data_ptr = (uint8_t *)(malloc(65536));
+	// TODO: song_init
+
 	stm.gvol = fgetc(fp);
-	ctx->global_volume = stm.gvol;
+	if(stm.version > 210)
+		ctx->global_volume = stm.gvol;
+	
 	fread(&stm.reserved, 1, 13, fp);
 
-	for (i = 1; i < 32; i++) {
+	for(i = 1; i < 32; ++i) {
 		fread(&ctx->samples[i].name, 1, 12, fp);
 		ctx->samples[i].id = fgetc(fp);
 		ctx->samples[i].disk = fgetc(fp);
@@ -87,33 +112,83 @@ int stm_load(st2_context_t *ctx, const char *filename)
 		ctx->samples[i].length = fgetw(fp);
 		ctx->samples[i].loop_start = fgetw(fp);
 		ctx->samples[i].loop_end = fgetw(fp);
+
 		if(ctx->samples[i].loop_end == 0)
 			ctx->samples[i].loop_end = 0xffff;
+
 		ctx->samples[i].volume = fgetc(fp);
 		ctx->samples[i].rsvd2 = fgetc(fp);
 		ctx->samples[i].c2spd = fgetw(fp);
 		ctx->samples[i].rsvd3 = fgetl(fp);
 		ctx->samples[i].length_par = fgetw(fp);
+
+		// NON-ST2: amegas.stm has some samples with loop-point over the sample length.
 		if(ctx->samples[i].loop_end != 0xffff && ctx->samples[i].loop_end > ctx->samples[i].length)
 			ctx->samples[i].loop_end = ctx->samples[i].length;
 	}
 
-	ctx->order_list_ptr = (uint8_t *)(malloc(128));
-	fread(ctx->order_list_ptr, 1, 128, fp);
+	if(stm.version == 200)
+		i = 64;
+	else
+		i = 128;
 
-	ctx->pattern_data_ptr = (uint8_t *)(malloc(0x400 * 64));
-	fread(ctx->pattern_data_ptr, 1, 0x400 * stm.patterns, fp);
+	fread(ctx->order_list_ptr, 1, i, fp);
 
-	for (i = 1; i < 32; i++)
+	for(i = 0; i < stm.patterns; ++i)
 	{
-		if (ctx->samples[i].volume && ctx->samples[i].length)
+		for(j = 0; j < 1024; ++j)
 		{
-			fseek(fp, ctx->samples[i].offset << 4, SEEK_SET);
-			ctx->samples[i].data = (uint8_t *)(malloc(ctx->samples[i].length + 1));
-			fread(ctx->samples[i].data, 1, ctx->samples[i].length, fp);
+			code = fgetc(fp);
+			switch(code)
+			{
+				case 0xfb:
+					ctx->pattern_data_ptr[(i << 10) + j] = 0; ++j;
+					ctx->pattern_data_ptr[(i << 10) + j] = 0; ++j;
+					ctx->pattern_data_ptr[(i << 10) + j] = 0; ++j;
+					ctx->pattern_data_ptr[(i << 10) + j] = 0;
+					break;
+				case 0xfd:
+					ctx->pattern_data_ptr[(i << 10) + j] = 0xfe; ++j;
+					ctx->pattern_data_ptr[(i << 10) + j] = 0x01; ++j;
+					ctx->pattern_data_ptr[(i << 10) + j] = 0x80; ++j;
+					ctx->pattern_data_ptr[(i << 10) + j] = 0;
+					break;
+				case 0xfc:
+					ctx->pattern_data_ptr[(i << 10) + j] = 0xff; ++j;
+					ctx->pattern_data_ptr[(i << 10) + j] = 0x01; ++j;
+					ctx->pattern_data_ptr[(i << 10) + j] = 0x80; ++j;
+					ctx->pattern_data_ptr[(i << 10) + j] = 0;
+					break;
+				default:
+					ctx->pattern_data_ptr[(i << 10) + j] = code; ++j;
+					ctx->pattern_data_ptr[(i << 10) + j] = fgetc(fp); ++j;
+					code = ctx->pattern_data_ptr[(i << 10) + j] = fgetc(fp); ++j;
+					ctx->pattern_data_ptr[(i << 10) + j] = fgetc(fp);
+					if(stm.version < 221 && (code & 0x0f) == 1) {
+						code = ctx->pattern_data_ptr[(i << 10) + j];
+						ctx->pattern_data_ptr[(i << 10) + j] = (code / 10 << 4) + code % 10;
+					}
+			}
 		}
 	}
 
-	fclose(fp);
-	return 0;
+	// TODO: Add external samples support.
+	if(stm.type == 2) {
+		for(i = 1; i < 32; ++i)
+		{
+			if(ctx->samples[i].volume && ctx->samples[i].length)
+			{
+				fseek(fp, ctx->samples[i].offset << 4, SEEK_SET);
+				ctx->samples[i].data = (uint8_t *)(malloc(ctx->samples[i].length + 1));
+				fread(ctx->samples[i].data, 1, ctx->samples[i].length, fp);
+			}
+		}
+	}
+
+	result = 0;
+cleanup:
+	if(fp)
+		fclose(fp);
+
+	return result;
 }
