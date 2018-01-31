@@ -73,7 +73,7 @@ int main(int argc, char *argv[])
 	context = st2_tracker_init();
 
 	if(stm_load(context, argv[1]))
-	    return -1;
+	    return 1;
 
 	st2_tracker_start(context, SAMPLING_FREQ);
 	st2_set_position(context, 0);
