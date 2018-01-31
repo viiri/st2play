@@ -70,7 +70,6 @@ int main(int argc, char *argv[])
 		exit(-1);
 	}
 
-	st2_init_tables();
 	context = st2_tracker_init();
 
 	if(stm_load(context, argv[1]))

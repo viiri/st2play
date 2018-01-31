@@ -19,9 +19,6 @@
 #ifndef ST2PLAY_H
 #define ST2PLAY_H
 
-#define ST2BASEFREQ 36072500  /* 2.21 */
-//#define ST2BASEFREQ 35468950 /* 2.3 */
-
 #define FXMULT 0x0a
 
 // LMN can be entered in the editor but don't do anything

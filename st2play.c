@@ -23,9 +23,10 @@
 
 #include "st2play.h"
 
-static uint16_t tempo_mul[18] = { 140, 50, 25, 15, 10, 7, 6, 4, 3, 3, 2, 2, 2, 2, 1, 1, 1, 1 };
-static uint16_t period_table[80] = { 17080, 16012, 15184, 14236, 13664, 12808, 12008, 11388, 10676, 10248, 9608, 9108, 0, 0, 0, 0 }; // 2.21
-//static uint16_t period_table[80] = { 17120, 16160, 15240, 14400, 13560, 12800, 12080, 11400, 10760, 10160, 9600, 9070, 0 ,0 ,0 ,0 }; // 2.3
+#define ST2BASEFREQ 36072500
+
+static uint16_t tempo_table[18] = { 140, 50, 25, 15, 10, 7, 6, 4, 3, 3, 2, 2, 2, 2, 1, 1, 1, 1 };
+static uint16_t period_table[80] = { 17080, 16012, 15184, 14236, 13664, 12808, 12008, 11388, 10676, 10248, 9608, 9108, 0, 0, 0, 0 };
 static int16_t lfo_table[65] = {   0,   24,   49,   74,   97,  120,  141,  161,  180,  197,  212,  224,  235,  244,  250,  253,
 								 255,  253,  250,  244,  235,  224,  212,  197,  180,  161,  141,  120,   97,   74,   49,   24,
 								   0,  -24,  -49,  -74,  -97, -120, -141, -161, -180, -197, -212, -224, -235, -244, -250, -253,
@@ -37,7 +38,7 @@ static void generate_volume_table(void);
 
 static void set_tempo(st2_context_t *ctx, uint8_t tempo);
 static void update_frequency(st2_context_t *ctx, size_t chn);
-static void cmd_once(st2_context_t *ctx, size_t chn);
+static void cmd_row(st2_context_t *ctx, size_t chn);
 static void cmd_tick(st2_context_t *ctx, size_t chn);
 static void trigger_note(st2_context_t *ctx, size_t chn);
 static void process_row(st2_context_t *ctx, size_t chn);
@@ -47,24 +48,32 @@ static void process_tick(st2_context_t *ctx);
 static void generate_period_table(void)
 {
 	size_t i;
+	static uint8_t period_table_initialized = 0;
 
-	for(i = 0; i < 64; ++i)
-		period_table[i + 16] = period_table[i] >> 1;
+	if(!period_table_initialized) {
+		for(i = 0; i < 64; ++i)
+			period_table[i + 16] = period_table[i] >> 1;
+		period_table_initialized = 1;
+	}
 }
 
 static void generate_volume_table(void)
 {
 	size_t i, j;
+	static uint8_t volume_table_initialized = 0;
 
-	for(i = 0; i < 65; ++i)
-		for(j = 0; j < 256; ++j)
-			volume_table[i][j] = (uint8_t)((i * (int8_t)j) / 256);
+	if(!volume_table_initialized) {
+		for(i = 0; i < 65; ++i)
+			for(j = 0; j < 256; ++j)
+				volume_table[i][j] = (uint8_t)((i * (int8_t)j) / 256);
+		volume_table_initialized = 1;
+	}
 }
 
 static void set_tempo(st2_context_t *ctx, uint8_t tempo)
 {
 	ctx->ticks_per_row = tempo >> 4;
-	ctx->frames_per_tick = ctx->sample_rate / (49 - ((tempo_mul[ctx->ticks_per_row] * (tempo & 0x0f)) >> 4));
+	ctx->frames_per_tick = ctx->sample_rate / (49 - ((tempo_table[ctx->ticks_per_row] * (tempo & 0x0f)) >> 4));
 }
 
 static void update_frequency(st2_context_t *ctx, size_t chn)
@@ -81,7 +90,7 @@ static void update_frequency(st2_context_t *ctx, size_t chn)
 	ch->smp_step = step;
 }
 
-static void cmd_once(st2_context_t *ctx, size_t chn)
+static void cmd_row(st2_context_t *ctx, size_t chn)
 {
 	st2_channel_t *ch = &ctx->channels[chn];
 
@@ -106,6 +115,14 @@ static void cmd_tick(st2_context_t *ctx, size_t chn)
 
 	switch(ch->event_cmd)
 	{
+		case FX_PORTAMENTODOWN:
+			ch->period_current += FXMULT * ch->event_infobyte;
+			update_frequency(ctx, chn);
+			break;
+		case FX_PORTAMENTOUP:
+			ch->period_current -= FXMULT * ch->event_infobyte;
+			update_frequency(ctx, chn);
+			break;
 		case FX_VOLUMESLIDE:
 			if(ch->event_infobyte & 0x0f) {
 				ch->volume_current -= ch->event_infobyte & 0x0f;
@@ -116,14 +133,6 @@ static void cmd_tick(st2_context_t *ctx, size_t chn)
 				if(ch->volume_current >= 65)
 					ch->volume_current = 64;
 			}
-			break;
-		case FX_PORTAMENTODOWN:
-			ch->period_current += FXMULT * ch->event_infobyte;
-			update_frequency(ctx, chn);
-			break;
-		case FX_PORTAMENTOUP:
-			ch->period_current -= FXMULT * ch->event_infobyte;
-			update_frequency(ctx, chn);
 			break;
 		case FX_TREMOR:
 			if(ch->tremor_counter == 0) {
@@ -213,17 +222,13 @@ static void trigger_note(st2_context_t *ctx, size_t chn)
 			ch->smp_loop_start = 0xffff;
 		} else {
 			ch->volume_meter = ch->volume_current >> 1;
-#ifndef FRANTIS
-			ch->period_current = period_table[ch->event_note] * 8448 / ctx->samples[ch->event_smp].c2spd; /* 8448 - 2.21; 8192 - 2.3 */
-#else
-			ch->period_current = period_table[ch->event_note];
-#endif
+			ch->period_current = period_table[ch->event_note] * 8448 / ctx->samples[ch->event_smp].c2spd;
 			ch->period_target = ch->period_current;
 			update_frequency(ctx, chn);
 		}
 	}
 
-	cmd_once(ctx, chn);
+	cmd_row(ctx, chn);
 }
 
 static void process_row(st2_context_t *ctx, size_t chn)
@@ -263,7 +268,9 @@ static void change_pattern(st2_context_t *ctx)
 	}
 
 	ctx->pattern_current = ctx->order_list_ptr[ctx->order_next];
-//	ctx->order_list_ptr[ctx->order_next] = 99;
+	// TODO: Subsong support, possible in loader.
+	// Uncomment to break song looping:
+	// ctx->order_list_ptr[ctx->order_next] = 99;
 	ctx->order_current = ctx->order_next++;
 
 	for(i = 0, j = 0; i < 4; ++i, j += 4)
@@ -333,12 +340,6 @@ uint8_t st2_render_sample(st2_context_t *ctx)
 	return mix - 128;
 }
 
-void st2_init_tables(void)
-{
-	generate_period_table();
-	generate_volume_table();
-}
-
 st2_context_t *st2_tracker_init(void)
 {
 	size_t i;
@@ -349,6 +350,9 @@ st2_context_t *st2_tracker_init(void)
 		return NULL;
 
 	memset(ctx, 0, sizeof(st2_context_t));
+
+	generate_volume_table();
+	generate_period_table();
 
 	ctx->tempo = 0x60;
 	ctx->global_volume = 64;
@@ -384,6 +388,17 @@ void st2_tracker_start(st2_context_t *ctx, uint16_t sample_rate)
 	change_pattern(ctx);
 }
 
+uint16_t st2_get_position(st2_context_t *ctx)
+{
+	return (ctx->loop_count << 8) | (ctx->order_current & 0xff);
+}
+
+void st2_set_position(st2_context_t *ctx, uint16_t ord)
+{
+	ctx->order_next = ctx->order_first = ord;
+	change_pattern(ctx);
+}
+
 void st2_tracker_destroy(st2_context_t *ctx)
 {
 	size_t i;
@@ -401,15 +416,4 @@ void st2_tracker_destroy(st2_context_t *ctx)
 
 		free(ctx);
 	}
-}
-
-uint16_t st2_get_position(st2_context_t *ctx)
-{
-	return (ctx->loop_count << 8) | (ctx->order_current & 0xff);
-}
-
-void st2_set_position(st2_context_t *ctx, uint16_t ord)
-{
-	ctx->order_next = ctx->order_first = ord;
-	change_pattern(ctx);
 }
