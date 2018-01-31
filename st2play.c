@@ -72,6 +72,7 @@ static void generate_volume_table(void)
 
 static void set_tempo(st2_context_t *ctx, uint8_t tempo)
 {
+	ctx->tempo = tempo;
 	ctx->ticks_per_row = tempo >> 4;
 	ctx->frames_per_tick = ctx->sample_rate / (49 - ((tempo_table[ctx->ticks_per_row] * (tempo & 0x0f)) >> 4));
 }
@@ -111,6 +112,7 @@ static void cmd_row(st2_context_t *ctx, size_t chn)
 
 static void cmd_tick(st2_context_t *ctx, size_t chn)
 {
+	uint8_t octa, note, note_add;
 	st2_channel_t *ch = &ctx->channels[chn];
 
 	switch(ch->event_cmd)
@@ -148,6 +150,35 @@ static void cmd_tick(st2_context_t *ctx, size_t chn)
 			} else {
 				ch->tremor_counter--;
 			}
+			break;
+		case FX_ARPEGGIO:
+			/*
+			 * Skaven's note from http://www.futurecrew.com/skaven/oldies_music.html
+			 *
+			 * FYI for the tech-heads: In the old Scream Tracker 2 the Arpeggio command
+			 * (Jxx), if used in a single row with a 0x value, caused the note to skip
+			 * the specified amount of halftones upwards halfway through the row. I used
+			 * this in some songs to give the lead some character. However, when played
+			 * in ModPlug Tracker, this effect doesn't work the way it did back then.
+			 */
+
+			note_add = 0;
+
+			if((ctx->current_tick / 3) == 0)
+				note_add = ch->event_infobyte & 0x0f;
+
+			octa =  ch->last_note & 0xf0;
+			note = (ch->last_note & 0x0f) + note_add;
+
+			if(note >= 11) {
+				note -= 12;
+				octa += 16;
+			}
+
+			ch->period_current = period_table[octa | note] * 8448 / (ch->smp_c2spd ? ch->smp_c2spd : 8888);
+			ch->period_target = ch->period_current;
+
+			update_frequency(ctx, chn);
 			break;
 		default:
 			ch->tremor_counter = 0;
@@ -203,7 +234,13 @@ static void trigger_note(st2_context_t *ctx, size_t chn)
 			ch->volume_initial = ch->volume_current;
 		}
 
-		ch->smp_data_ptr = ctx->samples[ch->event_smp].data;
+		ch->smp_c2spd = ctx->samples[ch->event_smp].c2spd;
+		if(ctx->samples[ch->event_smp].data == NULL) {
+			ch->event_note = 254;
+			ch->smp_data_ptr = NULL;
+		} else {
+			ch->smp_data_ptr = ctx->samples[ch->event_smp].data;
+		}
 
 		if(ctx->samples[ch->event_smp].loop_end != 0xffff) {
 			ch->smp_loop_end = ctx->samples[ch->event_smp].loop_end;
@@ -214,17 +251,18 @@ static void trigger_note(st2_context_t *ctx, size_t chn)
 		}
 	}
 
-	if(ch->event_note != 255) {
+	if(ch->event_note == 254) {
 		ch->smp_position = 0;
-
-		if(ch->event_note == 254) {
-			ch->smp_loop_end = 0;
-			ch->smp_loop_start = 0xffff;
-		} else {
+		ch->smp_loop_end = 0;
+		ch->smp_loop_start = 0xffff;
+	} else {
+		if(ch->event_note != 255) {
+			ch->last_note = ch->event_note;
 			ch->volume_meter = ch->volume_current >> 1;
-			ch->period_current = period_table[ch->event_note] * 8448 / ctx->samples[ch->event_smp].c2spd;
+			ch->period_current = period_table[ch->event_note] * 8448 / (ch->smp_c2spd ? ch->smp_c2spd : 8888);
 			ch->period_target = ch->period_current;
 			update_frequency(ctx, chn);
+			ch->smp_position = 0;
 		}
 	}
 
