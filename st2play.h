@@ -48,6 +48,8 @@ typedef struct st2_channel_s
 	uint16_t event_cmd;
 	uint16_t event_infobyte;
 	uint16_t last_note;
+	uint16_t last_infobyte1;
+	uint16_t last_infobyte2;
 	uint16_t period_current;
 	uint16_t period_target;
 	uint16_t vibrato_current;

@@ -23,10 +23,10 @@
 
 #include "st2play.h"
 
-#define ST2BASEFREQ 36072500
+#define ST2BASEFREQ 35468950
 
 static uint16_t tempo_table[18] = { 140, 50, 25, 15, 10, 7, 6, 4, 3, 3, 2, 2, 2, 2, 1, 1, 1, 1 };
-static uint16_t period_table[80] = { 17080, 16012, 15184, 14236, 13664, 12808, 12008, 11388, 10676, 10248, 9608, 9108, 0, 0, 0, 0 };
+static uint16_t period_table[80] = { 17120, 16160, 15240, 14400, 13560, 12800, 12080, 11400, 10760, 10160, 9600, 9070, 0 ,0 ,0 ,0 };
 static int16_t lfo_table[65] = {   0,   24,   49,   74,   97,  120,  141,  161,  180,  197,  212,  224,  235,  244,  250,  253,
 								 255,  253,  250,  244,  235,  224,  212,  197,  180,  161,  141,  120,   97,   74,   49,   24,
 								   0,  -24,  -49,  -74,  -97, -120, -141, -161, -180, -197, -212, -224, -235, -244, -250, -253,
@@ -74,7 +74,7 @@ static void set_tempo(st2_context_t *ctx, uint8_t tempo)
 {
 	ctx->tempo = tempo;
 	ctx->ticks_per_row = tempo >> 4;
-	ctx->frames_per_tick = ctx->sample_rate / (49 - ((tempo_table[ctx->ticks_per_row] * (tempo & 0x0f)) >> 4));
+	ctx->frames_per_tick = ctx->sample_rate / (50 - ((tempo_table[ctx->ticks_per_row] * (tempo & 0x0f)) >> 4));
 }
 
 static void update_frequency(st2_context_t *ctx, size_t chn)
@@ -117,24 +117,26 @@ static void cmd_tick(st2_context_t *ctx, size_t chn)
 
 	switch(ch->event_cmd)
 	{
-		case FX_PORTAMENTODOWN:
-			ch->period_current += FXMULT * ch->event_infobyte;
-			update_frequency(ctx, chn);
-			break;
-		case FX_PORTAMENTOUP:
-			ch->period_current -= FXMULT * ch->event_infobyte;
-			update_frequency(ctx, chn);
-			break;
-		case FX_VOLUMESLIDE:
-			if(ch->event_infobyte & 0x0f) {
-				ch->volume_current -= ch->event_infobyte & 0x0f;
-				if((int16_t)ch->volume_current <= -1)
-					ch->volume_current = 0;
-			} else {
-				ch->volume_current += ch->event_infobyte >> 4;
-				if(ch->volume_current >= 65)
-					ch->volume_current = 64;
+		case FX_ARPEGGIO:
+			if((ctx->current_tick % 3) == 1)
+				note_add = 0;
+			else if((ctx->current_tick % 3) == 2)
+				note_add = ch->event_infobyte >> 4;
+			else
+				note_add = ch->event_infobyte & 0x0f;
+
+			octa =  ch->last_note & 0xf0;
+			note = (ch->last_note & 0x0f) + note_add;
+
+			if(note >= 11) {
+				note -= 12;
+				octa += 16;
 			}
+
+			ch->period_current = period_table[octa | note] * 8192 / (ch->smp_c2spd ? ch->smp_c2spd : 8192);
+			ch->period_target = ch->period_current;
+
+			update_frequency(ctx, chn);
 			break;
 		case FX_TREMOR:
 			if(ch->tremor_counter == 0) {
@@ -151,41 +153,17 @@ static void cmd_tick(st2_context_t *ctx, size_t chn)
 				ch->tremor_counter--;
 			}
 			break;
-		case FX_ARPEGGIO:
-			/*
-			 * Skaven's note from http://www.futurecrew.com/skaven/oldies_music.html
-			 *
-			 * FYI for the tech-heads: In the old Scream Tracker 2 the Arpeggio command
-			 * (Jxx), if used in a single row with a 0x value, caused the note to skip
-			 * the specified amount of halftones upwards halfway through the row. I used
-			 * this in some songs to give the lead some character. However, when played
-			 * in ModPlug Tracker, this effect doesn't work the way it did back then.
-			 */
-
-			note_add = 0;
-
-			if((ctx->current_tick / 3) == 0)
-				note_add = ch->event_infobyte & 0x0f;
-
-			octa =  ch->last_note & 0xf0;
-			note = (ch->last_note & 0x0f) + note_add;
-
-			if(note >= 11) {
-				note -= 12;
-				octa += 16;
-			}
-
-			ch->period_current = period_table[octa | note] * 8448 / (ch->smp_c2spd ? ch->smp_c2spd : 8888);
-			ch->period_target = ch->period_current;
-
-			update_frequency(ctx, chn);
-			break;
 		default:
 			ch->tremor_counter = 0;
 			ch->tremor_state = 1;
 			switch(ch->event_cmd)
 			{
 				case FX_TONEPORTAMENTO:
+					// TODO: Ugly assembler legacy
+					if(ch->event_infobyte == 0)
+						fx_toneportamento: ch->event_infobyte = ch->last_infobyte1;
+					ch->last_infobyte1 = ch->event_infobyte;
+
 					if(ch->period_current != ch->period_target) {
 						if(ch->period_current > ch->period_target) {
 							ch->period_current -= FXMULT * ch->event_infobyte;
@@ -200,15 +178,56 @@ static void cmd_tick(st2_context_t *ctx, size_t chn)
 					}
 					break;
 				case FX_VIBRATO:
-					ch->period_current = (FXMULT * ((lfo_table[ch->vibrato_current >> 1] * (ch->event_infobyte & 0x0f)) >> 6)) + ch->period_target;
+					// TODO: Ugly assembler legacy
+					if(ch->event_infobyte == 0)
+						fx_vibrato: ch->event_infobyte = ch->last_infobyte2;
+					ch->last_infobyte2 = ch->event_infobyte;
+
+					ch->period_current = (FXMULT * ((lfo_table[ch->vibrato_current >> 1] * (ch->event_infobyte & 0x0f)) >> 7)) + ch->period_target;
 					update_frequency(ctx, chn);
 					ch->vibrato_current = (ch->vibrato_current + ((ch->event_infobyte >> 4) << 1)) & 0x7e;
 					break;
 				default:
 					ch->vibrato_current = 0;
-					break;
+					switch(ch->event_cmd)
+					{
+						case FX_PORTAMENTODOWN:
+							ch->period_current += FXMULT * ch->event_infobyte;
+							update_frequency(ctx, chn);
+							break;
+						case FX_PORTAMENTOUP:
+							ch->period_current -= FXMULT * ch->event_infobyte;
+							update_frequency(ctx, chn);
+							break;
+						case FX_VIBRA_VSLIDE:
+						case FX_TONE_VSLIDE:
+							goto fx_volumeslide;
+						case FX_VOLUMESLIDE:
+						default:
+							if(ch->period_current != ch->period_target) {
+								ch->period_current = ch->period_target;
+								update_frequency(ctx, chn);
+							}
+
+							if(ch->event_cmd != FX_VOLUMESLIDE)
+								break;
+						fx_volumeslide:
+							if(ch->event_infobyte & 0x0f) {
+								ch->volume_current -= ch->event_infobyte & 0x0f;
+								if((int16_t)ch->volume_current <= -1)
+									ch->volume_current = 0;
+							} else {
+								ch->volume_current += ch->event_infobyte >> 4;
+								if(ch->volume_current >= 65)
+									ch->volume_current = 64;
+							}
+
+							if(ch->event_cmd == FX_TONE_VSLIDE)
+								goto fx_toneportamento;
+							if(ch->event_cmd == FX_VIBRA_VSLIDE)
+								goto fx_vibrato;
+					}
 			}
-			break;
 	}
 }
 
@@ -223,7 +242,7 @@ static void trigger_note(st2_context_t *ctx, size_t chn)
 
 	if(ch->event_cmd == FX_TONEPORTAMENTO) {
 		if(ch->event_note != 255)
-			ch->period_target = period_table[ch->event_note];
+			ch->period_target = period_table[ch->event_note] * 8192 / (ch->smp_c2spd ? ch->smp_c2spd : 8192);
 		return;
 	}
 
@@ -259,7 +278,7 @@ static void trigger_note(st2_context_t *ctx, size_t chn)
 		if(ch->event_note != 255) {
 			ch->last_note = ch->event_note;
 			ch->volume_meter = ch->volume_current >> 1;
-			ch->period_current = period_table[ch->event_note] * 8448 / (ch->smp_c2spd ? ch->smp_c2spd : 8888);
+			ch->period_current = period_table[ch->event_note] * 8192 / (ch->smp_c2spd ? ch->smp_c2spd : 8192);
 			ch->period_target = ch->period_current;
 			update_frequency(ctx, chn);
 			ch->smp_position = 0;
@@ -403,7 +422,7 @@ st2_context_t *st2_tracker_init(void)
 		ctx->samples[i].loop_start = 0;
 		ctx->samples[i].loop_end = 0xffff;
 		ctx->samples[i].volume = 0;
-		ctx->samples[i].c2spd = 8448;
+		ctx->samples[i].c2spd = 8192;
 	}
 
 	return ctx;
