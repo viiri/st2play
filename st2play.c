@@ -337,7 +337,7 @@ uint8_t st2_render_sample(st2_context_t *ctx)
 		ctx->current_frame--;
 	}
 
-	return mix - 128;
+	return mix + 128;
 }
 
 st2_context_t *st2_tracker_init(void)
