@@ -165,13 +165,13 @@ static void cmd_tick(st2_context_t *ctx, size_t chn)
 					ch->last_infobyte1 = ch->event_infobyte;
 
 					if(ch->period_current != ch->period_target) {
-						if(ch->period_current > ch->period_target) {
+						if((int16_t)ch->period_current > (int16_t)ch->period_target) {
 							ch->period_current -= FXMULT * ch->event_infobyte;
-							if(ch->period_current < ch->period_target)
+							if((int16_t)ch->period_current < (int16_t)ch->period_target)
 								ch->period_current = ch->period_target;
 						} else {
 							ch->period_current += FXMULT * ch->event_infobyte;
-							if(ch->period_current > ch->period_target)
+							if((int16_t)ch->period_current > (int16_t)ch->period_target)
 								ch->period_current = ch->period_target;
 						}
 						update_frequency(ctx, chn);
