@@ -179,7 +179,7 @@ int stm_load(st2_context_t *ctx, const char *filename)
 			if(ctx->samples[i].volume && ctx->samples[i].length)
 			{
 				fseek(fp, ctx->samples[i].offset << 4, SEEK_SET);
-				ctx->samples[i].data = (uint8_t *)(malloc(ctx->samples[i].length + 1));
+				ctx->samples[i].data = (uint8_t *)(calloc(ctx->samples[i].length + 1, 1));
 				fread(ctx->samples[i].data, 1, ctx->samples[i].length, fp);
 			}
 		}
