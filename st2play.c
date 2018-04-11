@@ -26,7 +26,7 @@
 #define ST2BASEFREQ 36072500
 
 static uint16_t tempo_table[18] = { 140, 50, 25, 15, 10, 7, 6, 4, 3, 3, 2, 2, 2, 2, 1, 1, 1, 1 };
-static uint16_t period_table[80] = { 17080, 16012, 15184, 14236, 13664, 12808, 12008, 11388, 10676, 10248, 9608, 9108, 0, 0, 0, 0 };
+static uint16_t period_table[256] = { 17080, 16012, 15184, 14236, 13664, 12808, 12008, 11388, 10676, 10248, 9608, 9108, 0, 0, 0, 0 };
 static int16_t lfo_table[65] = {   0,   24,   49,   74,   97,  120,  141,  161,  180,  197,  212,  224,  235,  244,  250,  253,
 								 255,  253,  250,  244,  235,  224,  212,  197,  180,  161,  141,  120,   97,   74,   49,   24,
 								   0,  -24,  -49,  -74,  -97, -120, -141, -161, -180, -197, -212, -224, -235, -244, -250, -253,
@@ -53,6 +53,8 @@ static void generate_period_table(void)
 	if(!period_table_initialized) {
 		for(i = 0; i < 64; ++i)
 			period_table[i + 16] = period_table[i] >> 1;
+		// Some crap from memory
+		period_table[255] = 0x3e83;
 		period_table_initialized = 1;
 	}
 }
