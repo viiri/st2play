@@ -373,17 +373,14 @@ uint8_t st2_render_sample(st2_context_t *ctx)
 	{
 		ch = &ctx->channels[i];
 		ch->smp_position += ch->smp_step;
-		if((ch->smp_position >> 16) >= ch->smp_loop_end) {
-			if(ch->smp_loop_start != 0xffff) {
-				ch->smp_position = (ch->smp_loop_start << 16) | (ch->smp_position & 0xffff);
-			} else {
-				ch->empty = 1;
-				continue;
-			}
-		}
 
-		if(ch->smp_data_ptr != NULL && (ch->smp_position >> 16) < ch->smp_loop_end && ch->volume_mix < 65)
-			mix += volume_table[ch->volume_mix][ch->smp_data_ptr[ch->smp_position >> 16]];
+		if((ch->smp_position >> 16) < ch->smp_loop_end || (ch->smp_position = (ch->smp_loop_start << 16) | (ch->smp_position & 0xffff), ch->smp_loop_start != 0xffff)) {
+			if(ch->smp_data_ptr != NULL && ch->volume_mix < 65)
+				mix += volume_table[ch->volume_mix][ch->smp_data_ptr[ch->smp_position >> 16]];
+		} else {
+			ch->smp_position = (ch->smp_loop_end << 16) | (ch->smp_position & 0xffff);
+			ch->empty = 1;
+		}
 	}
 
 	if(ctx->current_frame == 1) {
